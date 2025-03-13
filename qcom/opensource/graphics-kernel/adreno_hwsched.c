@@ -715,50 +715,6 @@ u32 adreno_hwsched_gpu_fault(struct adreno_device *adreno_dev)
 }
 
 /**
- * adreno_hwsched_issuecmds() - Issue commmands from pending contexts
- * @adreno_dev: Pointer to the adreno device struct
- *
- * Lock the dispatcher and call hwsched_issuecmds
- */
-static void adreno_hwsched_issuecmds(struct adreno_device *adreno_dev)
-{
-	struct adreno_hwsched *hwsched = &adreno_dev->hwsched;
-	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-
-	spin_lock(&device->submit_lock);
-	/* If GPU state is not ACTIVE, schedule the work for later */
-	if (device->skip_inline_submit) {
-		spin_unlock(&device->submit_lock);
-		goto done;
-	}
-	device->submit_now++;
-	spin_unlock(&device->submit_lock);
-
-	/* If the dispatcher is busy then schedule the work for later */
-	if (!mutex_trylock(&hwsched->mutex)) {
-		_decrement_submit_now(device);
-		goto done;
-	}
-
-	if (!adreno_hwsched_gpu_fault(adreno_dev))
-		hwsched_issuecmds(adreno_dev);
-
-	if (hwsched->inflight > 0) {
-		mutex_lock(&device->mutex);
-		kgsl_pwrscale_update(device);
-		kgsl_start_idle_timer(device);
-		mutex_unlock(&device->mutex);
-	}
-
-	mutex_unlock(&hwsched->mutex);
-	_decrement_submit_now(device);
-	return;
-
-done:
-	adreno_hwsched_trigger(adreno_dev);
-}
-
-/**
  * get_timestamp() - Return the next timestamp for the context
  * @drawctxt - Pointer to an adreno draw context struct
  * @drawobj - Pointer to a drawobj
@@ -1105,7 +1061,7 @@ static int adreno_hwsched_queue_cmds(struct kgsl_device_private *dev_priv,
 	if (_kgsl_context_get(&drawctxt->base)) {
 		trace_dispatch_queue_context(drawctxt);
 		llist_add(&job->node, &hwsched->jobs[drawctxt->base.priority]);
-		adreno_hwsched_issuecmds(adreno_dev);
+		adreno_hwsched_trigger(adreno_dev);
 
 	} else
 		kmem_cache_free(jobs_cache, job);
@@ -1894,6 +1850,10 @@ static bool adreno_hwsched_do_fault(struct adreno_device *adreno_dev)
 
 	mutex_lock(&device->mutex);
 
+#ifdef CONFIG_OPLUS_GPU_MINIDUMP
+	device->snapshotfault = fault;
+#endif /*CONFIG_OPLUS_GPU_MINIDUMP*/
+
 	if (test_bit(ADRENO_HWSCHED_CTX_BAD_LEGACY, &hwsched->flags))
 		adreno_hwsched_reset_and_snapshot_legacy(adreno_dev, fault);
 	else
@@ -2076,7 +2036,6 @@ int adreno_hwsched_init(struct adreno_device *adreno_dev,
 	}
 
 	sched_set_fifo(hwsched->worker->task);
-
 	WARN_ON(sysfs_create_files(&device->dev->kobj, _hwsched_attr_list));
 	adreno_set_dispatch_ops(adreno_dev, &hwsched_ops);
 	hwsched->hwsched_ops = target_hwsched_ops;

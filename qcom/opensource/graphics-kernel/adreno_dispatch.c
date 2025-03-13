@@ -905,51 +905,6 @@ static void _dispatcher_update_timers(struct adreno_device *adreno_dev)
 	}
 }
 
-static inline void _decrement_submit_now(struct kgsl_device *device)
-{
-	spin_lock(&device->submit_lock);
-	device->submit_now--;
-	spin_unlock(&device->submit_lock);
-}
-
-/**
- * adreno_dispatcher_issuecmds() - Issue commmands from pending contexts
- * @adreno_dev: Pointer to the adreno device struct
- *
- * Lock the dispatcher and call _adreno_dispatcher_issueibcmds
- */
-static void adreno_dispatcher_issuecmds(struct adreno_device *adreno_dev)
-{
-	struct adreno_dispatcher *dispatcher = &adreno_dev->dispatcher;
-	struct kgsl_device *device = KGSL_DEVICE(adreno_dev);
-
-	spin_lock(&device->submit_lock);
-	/* If state is not ACTIVE, schedule the work for later */
-	if (device->skip_inline_submit) {
-		spin_unlock(&device->submit_lock);
-		goto done;
-	}
-	device->submit_now++;
-	spin_unlock(&device->submit_lock);
-
-	/* If the dispatcher is busy then schedule the work for later */
-	if (!mutex_trylock(&dispatcher->mutex)) {
-		_decrement_submit_now(device);
-		goto done;
-	}
-
-	_adreno_dispatcher_issuecmds(adreno_dev);
-
-	if (dispatcher->inflight)
-		_dispatcher_update_timers(adreno_dev);
-
-	mutex_unlock(&dispatcher->mutex);
-	_decrement_submit_now(device);
-	return;
-done:
-	adreno_dispatcher_schedule(device);
-}
-
 /**
  * get_timestamp() - Return the next timestamp for the context
  * @drawctxt - Pointer to an adreno draw context struct
@@ -1364,17 +1319,7 @@ static int adreno_dispatcher_queue_cmds(struct kgsl_device_private *dev_priv,
 		goto done;
 	}
 
-	/*
-	 * Only issue commands if inflight is less than burst -this prevents us
-	 * from sitting around waiting for the mutex on a busy system - the work
-	 * loop will schedule it for us. Inflight is mutex protected but the
-	 * worse that can happen is that it will go to 0 after we check and if
-	 * it goes to 0 it is because the work loop decremented it and the work
-	 * queue will try to schedule new commands anyway.
-	 */
-
-	if (dispatch_q->inflight < _context_drawobj_burst)
-		adreno_dispatcher_issuecmds(adreno_dev);
+	adreno_dispatcher_schedule(device);
 done:
 	if (test_and_clear_bit(ADRENO_CONTEXT_FAULT, &context->priv))
 		return -EPROTO;

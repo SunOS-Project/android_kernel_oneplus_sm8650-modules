@@ -59,7 +59,7 @@ ifeq ($(CONFIG_ARCH_HOLI), y)
 	include $(KGSL_PATH)/config/gki_blair.conf
 endif
 
-ccflags-y += -I$(KGSL_PATH) -I$(KGSL_PATH)/include/linux -I$(KGSL_PATH)/include -I$(KERNEL_SRC)/drivers/devfreq
+ccflags-y += -I$(KGSL_PATH) -I$(KGSL_PATH)/include/linux -I$(KGSL_PATH)/include -I$(KERNEL_SRC)/drivers/devfreq -I$(KERNEL_SRC)
 
 obj-$(CONFIG_QCOM_KGSL) += msm_kgsl.o
 

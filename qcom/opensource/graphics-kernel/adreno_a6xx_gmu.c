@@ -3490,18 +3490,6 @@ static void gmu_idle_check(struct work_struct *work)
 	if (!test_bit(GMU_PRIV_GPU_STARTED, &gmu->flags))
 		goto done;
 
-	spin_lock(&device->submit_lock);
-
-	if (device->submit_now) {
-		spin_unlock(&device->submit_lock);
-		kgsl_pwrscale_update(device);
-		kgsl_start_idle_timer(device);
-		goto done;
-	}
-
-	device->skip_inline_submit = true;
-	spin_unlock(&device->submit_lock);
-
 	ret = a6xx_power_off(adreno_dev);
 	if (ret == -EBUSY) {
 		kgsl_pwrscale_update(device);

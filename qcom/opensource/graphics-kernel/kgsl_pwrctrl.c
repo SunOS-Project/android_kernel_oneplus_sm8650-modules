@@ -1748,24 +1748,10 @@ void kgsl_idle_check(struct work_struct *work)
 	if (device->state == KGSL_STATE_ACTIVE) {
 
 		if (!atomic_read(&device->active_cnt)) {
-			spin_lock(&device->submit_lock);
-			if (device->submit_now) {
-				spin_unlock(&device->submit_lock);
-				goto done;
-			}
-			/* Don't allow GPU inline submission in SLUMBER */
-			if (requested_state == KGSL_STATE_SLUMBER)
-				device->skip_inline_submit = true;
-			spin_unlock(&device->submit_lock);
 
 			ret = kgsl_pwrctrl_change_state(device,
 					device->requested_state);
 			if (ret == -EBUSY) {
-				if (requested_state == KGSL_STATE_SLUMBER) {
-					spin_lock(&device->submit_lock);
-					device->skip_inline_submit = false;
-					spin_unlock(&device->submit_lock);
-				}
 				/*
 				 * If the GPU is currently busy, restore
 				 * the requested state and reschedule
@@ -1776,7 +1762,7 @@ void kgsl_idle_check(struct work_struct *work)
 				kgsl_schedule_work(&device->idle_check_ws);
 			}
 		}
-done:
+
 		if (!ret)
 			kgsl_pwrctrl_request_state(device, KGSL_STATE_NONE);
 
@@ -2137,16 +2123,8 @@ void kgsl_pwrctrl_set_state(struct kgsl_device *device,
 	trace_kgsl_pwr_set_state(device, state);
 	device->state = state;
 	device->requested_state = KGSL_STATE_NONE;
-
 	if (state == KGSL_STATE_SLUMBER)
 		device->pwrctrl.wake_on_touch = false;
-
-	spin_lock(&device->submit_lock);
-	if (state == KGSL_STATE_ACTIVE)
-		device->skip_inline_submit = false;
-	else
-		device->skip_inline_submit = true;
-	spin_unlock(&device->submit_lock);
 }
 
 void kgsl_pwrctrl_request_state(struct kgsl_device *device,

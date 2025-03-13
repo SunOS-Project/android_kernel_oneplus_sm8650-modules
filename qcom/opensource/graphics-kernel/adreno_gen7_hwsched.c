@@ -18,6 +18,11 @@
 #include "kgsl_device.h"
 #include "kgsl_trace.h"
 
+static DEFINE_PER_CPU(struct freq_qos_request, qos_min_req);
+#define GPU_BUSY_THRESHOLD (65)
+#define GPU_FREQ_THRESHOLD (700 * 1000)
+
+
 static void _wakeup_hw_fence_waiters(struct adreno_device *adreno_dev, u32 fault)
 {
 	struct gen7_hwsched_hfi *hfi = to_gen7_hwsched_hfi(adreno_dev);

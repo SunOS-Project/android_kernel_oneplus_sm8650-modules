@@ -137,6 +137,9 @@ def define_target_variant_module(target, variant):
             "CONFIG_QCOM_KGSL_USE_SHMEM": { False: [ "kgsl_pool.c" ] },
             "CONFIG_SYNC_FILE": { True: [ "kgsl_sync.c" ] },
         },
+#ifdef CONFIG_OPLUS_GPU_MINIDUMP
+        local_defines = ["CONFIG_OPLUS_GPU_MINIDUMP"],
+#endif /* CONFIG_OPLUS_GPU_MINIDUMP */
         deps = [ "//msm-kernel:all_headers" ] + ext_deps,
         includes = ["include", "."],
         kernel_build = kernel_build,
