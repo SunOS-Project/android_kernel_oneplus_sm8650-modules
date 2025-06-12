@@ -12,13 +12,6 @@ def define_modules(target, variant):
     mod_list = []
     ipam_deps_list = []
     ipam_local_defines = []
-    if target != "niobe":
-             ipam_deps_list.append(
-              "//vendor/qcom/opensource/datarmnet-ext/mem:{}_rmnet_mem".format(kernel_build_variant),
-             )
-             ipam_local_defines.append(
-              "CONFIG_IPA_RMNET_MEM=y".format(include_base),
-             )
     if target == "niobe":
             ipam_deps_list.extend([
              "//vendor/qcom/opensource/synx-kernel:synx_headers",
@@ -27,6 +20,18 @@ def define_modules(target, variant):
             ipam_local_defines.append(
               "CONFIG_IPA_RTP=y".format(include_base),
             )
+    elif target == "seraph":
+            ipam_deps_list.extend([
+             "//vendor/qcom/opensource/synx-kernel:synx_headers",
+             "//vendor/qcom/opensource/synx-kernel:{}_modules".format(kernel_build_variant),
+            ])
+    else:
+             ipam_deps_list.append(
+              "//vendor/qcom/opensource/datarmnet-ext/mem:{}_rmnet_mem".format(kernel_build_variant),
+             )
+             ipam_local_defines.append(
+              "CONFIG_IPA_RMNET_MEM=y".format(include_base),
+             )
 
     ddk_module(
         name = "{}_gsim".format(kernel_build_variant),
