@@ -186,6 +186,7 @@ enum htt_dbg_ext_stats_type {
      *           7 bit htt_peer_sched_stats_tlv
      *           8 bit htt_peer_ax_ofdma_stats_tlv
      *           9 bit htt_peer_be_ofdma_stats_tlv
+     *          10 bit htt_stats_rx_peer_tid_reo_queue_ba_tlv
      *   - config_param2: [Bit31 : Bit0] mac_addr31to0
      *   - config_param3: [Bit15 : Bit0] mac_addr47to32
      *                    [Bit 16] If this bit is set, reset per peer stats
@@ -693,12 +694,14 @@ enum htt_dbg_ext_stats_type {
         HTT_DBG_ODD_UL_BE_OFDMA_STATS =
             HTT_DBG_EXT_STATS_ODD_UL_BE_BN_OFDMA,
 
-    /** HTT_DBG_EXT_STATS_ODD_BE_TXBF_OFDMA
+    /** HTT_DBG_EXT_STATS_ODD_BE_BN_TXBF_OFDMA_STATS
      */
-    HTT_DBG_EXT_STATS_ODD_BE_TXBF_OFDMA = 61,
-        /* retain the deprecated name as an alias */
+    HTT_DBG_EXT_STATS_ODD_BE_BN_TXBF_OFDMA_STATS = 61,
+        /* retain the deprecated names as aliases */
+        HTT_DBG_EXT_STATS_ODD_BE_TXBF_OFDMA =
+            HTT_DBG_EXT_STATS_ODD_BE_BN_TXBF_OFDMA_STATS,
         HTT_DBG_ODD_BE_TXBF_OFDMA_STATS =
-            HTT_DBG_EXT_STATS_ODD_BE_TXBF_OFDMA,
+            HTT_DBG_EXT_STATS_ODD_BE_BN_TXBF_OFDMA_STATS,
 
     /** HTT_DBG_EXT_STATS_ODD_STATS_PDEV_BE_UL_MUMIMO_TRIG
      * PARAMS:
@@ -846,6 +849,14 @@ enum htt_dbg_ext_stats_type {
      *   - htt_stats_hds_prof_stats_tlv
      */
     HTT_DBG_EXT_STATS_HDS_PROF = 76,
+
+    /** HTT_DBG_EXT_STATS_OPTIONAL_CONFIGS
+     * PARAMS:
+     *   - No Params
+     * RESP MSG:
+     *   - htt_stats_optional_configs_tlv
+     */
+    HTT_DBG_EXT_STATS_OPTIONAL_CONFIGS = 77,
 
 
     /* keep this last */
@@ -1016,11 +1027,13 @@ typedef enum {
     HTT_UPLOAD_AX_TXBF_OFDMA_STATS,
 
     /*
-     * Upload 11be TXBF OFDMA stats
+     * Upload 11be and 11bn TXBF OFDMA stats
      *
      * TLV: htt_tx_pdev_be_txbf_ofdma_stats_t
      */
-    HTT_UPLOAD_BE_TXBF_OFDMA_STATS,
+    HTT_UPLOAD_BE_BN_TXBF_OFDMA_STATS,
+        /* retain previous name as alias */
+        HTT_UPLOAD_BE_TXBF_OFDMA_STATS = HTT_UPLOAD_BE_BN_TXBF_OFDMA_STATS,
 } htt_tx_pdev_txbf_ofdma_stats_upload_t;
 
 /* htt_tx_pdev_puncture_stats_upload_t
@@ -1285,6 +1298,8 @@ typedef struct {
         /* upper 32 bits of the tx_bytes value */
         A_UINT32 high_32;
     } bytes_sent;
+    /* increment array based on AC */
+    A_UINT32 num_ppdu_tried_ota_per_ac[HTT_NUM_AC_WMM];
 } htt_stats_tx_pdev_cmn_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_tx_pdev_cmn_tlv htt_tx_pdev_stats_cmn_tlv;
@@ -2094,6 +2109,247 @@ typedef struct _htt_rx_tid_stats_tlv {
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_rx_tid_details_tlv htt_rx_tid_stats_tlv;
 
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+
+    /* Lower 4 bytes (bytes 0-3) of the MAC address */
+    A_UINT32 peer_mac_addr_31_0;
+    /* Upper 2 bytes (bytes 4-5) of MAC, and TID (1 byte) */
+    A_UINT32 peer_mac_addr_47_32_and_tid_num;
+
+    /**
+     * BIT [11: 0] : Starting Sequence number of the session,
+     *               this changes whenever window moves
+     * BIT [21:12] : Points to last forwarded packet
+     */
+    union {
+        A_UINT32 ssn_current_index;
+        struct {
+            A_UINT32 ssn           : 12,
+                     current_index : 10,
+                     reserved_0    : 10;
+        };
+    };
+
+    /** Current PN number */
+    A_UINT32 pn_31_0;
+    A_UINT32 pn_63_32;
+    A_UINT32 pn_95_64;
+    A_UINT32 pn_127_96;
+
+    /**
+     * Timestamp of arrival of the last MPDU for this queue (in microseconds)
+     */
+    A_UINT32 last_rx_enqueue_timestamp_us;
+
+    /** Timestamp of forwarding an MPDU (in microseconds) */
+    A_UINT32 last_rx_dequeue_timestamp_us;
+
+    /** The number of MPDUs, MSDUs in the queue */
+    union {
+        A_UINT32 mpdu_msdu_cnt;
+        struct {
+            A_UINT32 current_mpdu_cnt : 16,
+                     current_msdu_cnt : 16;
+        };
+    };
+
+    /** The number of times the window moved more then 2K */
+    A_UINT32 window_jump_2k_cnt;
+
+    /**
+     * The number of times that REO started forwarding frames even though
+     * there is a hole in the bitmap.
+     * Forwarding reason is Timeout.
+     */
+    A_UINT32 timeout_cnt;
+
+    /**
+     * The number of times that REO started forwarding frames even though
+     * there is a hole in the bitmap.
+     * Forwarding reason is reception of BAR frame.
+     */
+    A_UINT32 forward_due_to_bar_cnt;
+
+    /** The number of duplicate frames that have been detected */
+    A_UINT32 duplicate_cnt;
+
+    /**
+     * The number of frames that have been received in order without a hole
+     * that prevented them from being forwarded immediately.
+     */
+    A_UINT32 frames_in_order_cnt;
+
+    /** The number of times a BAR frame is received. */
+    A_UINT32 bar_received_cnt;
+
+    /**
+     * The total number of MPDU frames that have been processed,
+     * this includes the duplicates.
+     */
+    A_UINT32 mpdu_frames_processed_cnt;
+
+    /**
+     * The total number of MSDU frames that have been processed,
+     * this includes the duplicates.
+     */
+    A_UINT32 msdu_frames_processed_cnt;
+
+    /**
+     * An approximation of the number of bytes received for
+     * this queue, in 64 byte units.
+     */
+    A_UINT32 total_processed_byte_cnt;
+
+    /** The number of MPDUs received after the window had already moved on */
+    A_UINT32 late_receive_mpdu_cnt;
+
+    /** The number of times a hole was created in the receive bitmap */
+    A_UINT32 hole_cnt;
+
+    /**
+     * The number of holes in the bitmap that moved due to aging
+     * counter expiry
+     */
+    A_UINT32 aging_drop_mpdu_cnt;
+
+    /**
+     * The number of times holes got removed from the bitmap due to
+     * aging counter expiry
+     */
+    A_UINT32 aging_drop_interval_cnt;
+
+    /** The number of ADDBA Req received */
+    A_UINT32 addba_req_cnt;
+
+    /** The number of ADDBA Resp replied for RX ADDBA Req */
+    A_UINT32 addba_resp_cnt;
+
+    /** The number of ADDBA Resp sent successfully */
+    A_UINT32 addba_rsp_success_cnt;
+
+    /** The number of ADDBA Resp sent failed */
+    A_UINT32 addba_rsp_fail_cnt;
+
+    /** The number of DELBA Req received */
+    A_UINT32 delba_req_cnt;
+
+    /** The number of DELBA Req sent successfully */
+    A_UINT32 delba_tx_success_cnt;
+
+    /** The number of DELBA Req sent failed */
+    A_UINT32 delba_tx_fail_cnt;
+
+    /** BA window size established */
+    A_UINT32 ba_win_size;
+
+    /** PN size established */
+    A_UINT32 pn_size;
+} htt_stats_rx_peer_tid_reo_queue_ba_tlv;
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MAC_ADDR_SET(_tlv_ptr, _mac_addr_ptr) \
+    do { \
+        A_UINT32 __packed_mac_47_32; \
+        /* Pack MAC addr bytes [0-3] into peer_mac_addr_31_0 */ \
+        (_tlv_ptr)->peer_mac_addr_31_0 = (A_UINT32) \
+            (((_mac_addr_ptr)[0] << 0)  | \
+             ((_mac_addr_ptr)[1] << 8)  | \
+             ((_mac_addr_ptr)[2] << 16) | \
+             ((_mac_addr_ptr)[3] << 24)); \
+        /*
+         * Pack MAC addr bytes [4-5] into the LOWER 16 bits of
+         * peer_mac_addr_47_32_and_tid_num
+         */ \
+        __packed_mac_47_32 = (A_UINT32) \
+            (((_mac_addr_ptr)[4] << 0)  | \
+             ((_mac_addr_ptr)[5] << 8)); \
+        /*
+         * Set lower 16 bits of peer_mac_addr_47_32_and_tid_num,
+         * preserving upper 16 bits (which includes the TID) if already set
+          */ \
+        (_tlv_ptr)->peer_mac_addr_47_32_and_tid_num &= ~0x0000FFFF; /* Clear existing MAC addr bits (lower 16) */ \
+        (_tlv_ptr)->peer_mac_addr_47_32_and_tid_num |= __packed_mac_47_32; \
+    } while (0)
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MAC_ADDR_GET(_tlv_ptr, _dest_mac_addr_ptr) \
+    do { \
+        A_UINT32 __mac_31_0_val = (_tlv_ptr)->peer_mac_addr_31_0; \
+        /* Extract MAC bytes [4-5] from the LOWER 16 bits of peer_mac_addr_47_32_and_tid */ \
+        A_UINT32 __mac_47_32_val = ((_tlv_ptr)->peer_mac_addr_47_32_and_tid_num) & 0xFFFF; \
+        (_dest_mac_addr_ptr)[0] = (A_UINT8)((__mac_31_0_val  >>  0) & 0xFF); \
+        (_dest_mac_addr_ptr)[1] = (A_UINT8)((__mac_31_0_val  >>  8) & 0xFF); \
+        (_dest_mac_addr_ptr)[2] = (A_UINT8)((__mac_31_0_val  >> 16) & 0xFF); \
+        (_dest_mac_addr_ptr)[3] = (A_UINT8)((__mac_31_0_val  >> 24) & 0xFF); \
+        (_dest_mac_addr_ptr)[4] = (A_UINT8)((__mac_47_32_val >>  0) & 0xFF); \
+        (_dest_mac_addr_ptr)[5] = (A_UINT8)((__mac_47_32_val >>  8) & 0xFF); \
+    } while (0)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_M    0x00FF0000 /* Mask for TID_NUM */
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_S    16         /* Shift for TID_NUM */
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_GET(_var) \
+    (((_var) & HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_M) >> \
+     HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_S)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM, _val); \
+        ((_var) |= ((_val) << HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_TID_NUM_S)); \
+    } while (0)
+
+/* Macros for ssn and current_index */
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_M           0x00000fff
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_S           0
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_M 0x003ff000
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_S 12
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_GET(_var) \
+    (((_var) & HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_M) >> \
+     HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_S)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN, _val); \
+        ((_var) |= ((_val) << HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_SSN_S)); \
+    } while (0)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_GET(_var) \
+    (((_var) & HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_M) >> \
+     HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_S)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX, _val); \
+        ((_var) |= ((_val) << HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_CURRENT_INDEX_S)); \
+    } while (0)
+
+/* Macros for mpdu/msdu count */
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_M 0x0000ffff
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_S 0
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_M 0xffff0000
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_S 16
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_GET(_var) \
+    (((_var) & HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_M) >> \
+     HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_S)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT, _val); \
+        ((_var) |= ((_val) << HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MPDU_CNT_S)); \
+    } while (0)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_GET(_var) \
+    (((_var) & HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_M) >> \
+     HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_S)
+
+#define HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT, _val); \
+        ((_var) |= ((_val) << HTT_STATS_RX_PEER_TID_REO_QUEUE_BA_MSDU_CNT_S)); \
+    } while (0)
+
+
 #define HTT_MAX_COUNTER_NAME 8
 typedef struct {
     htt_tlv_hdr_t tlv_hdr;
@@ -2529,6 +2785,7 @@ typedef enum {
     HTT_PEER_OFDMA_STATS_TLV    = 8,
         HTT_PEER_AX_OFDMA_STATS_TLV = HTT_PEER_OFDMA_STATS_TLV, /* DEPRECATED */
     HTT_PEER_BE_OFDMA_STATS_TLV = 9,                            /* DEPRECATED */
+    HTT_PEER_RX_REO_STATS_TLV   = 10,
 
     HTT_PEER_STATS_MAX_TLV      = 31,
 } htt_peer_stats_tlv_enum;
@@ -3300,6 +3557,9 @@ typedef struct {
      */
     A_UINT32 smart_basic_trig_sch_histogram[HTT_MAX_NUM_SBT_INTR];
     A_UINT32 ru_alloc_mode_cnt[HTT_RU_ALLOC_NUM_MODES];
+    A_UINT32 mu_bar_pipeline_seq_cnt;
+    A_UINT32 mu_bar_pipeline_resume_cnt;
+    A_UINT32 mu_bar_pipeline_resume_fail_cnt;
 } htt_stats_tx_selfgen_cmn_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_tx_selfgen_cmn_stats_tlv htt_tx_selfgen_cmn_stats_tlv;
@@ -3954,6 +4214,165 @@ typedef struct {
     A_UINT32 be_ofdma_total_cv;
 } htt_stats_txbf_ofdma_be_parbw_tlv;
 
+typedef struct {
+    /** 11BN UHR OFDMA NDPA frame queued to the HW */
+    A_UINT32 bn_ofdma_ndpa_queued;
+    /** 11BN UHR OFDMA NDPA frame sent over the air */
+    A_UINT32 bn_ofdma_ndpa_tried;
+    /** 11BN UHR OFDMA NDPA frame flushed by HW */
+    A_UINT32 bn_ofdma_ndpa_flushed;
+    /** 11BN UHR OFDMA NDPA frame completed with error(s) */
+    A_UINT32 bn_ofdma_ndpa_err;
+} htt_txbf_ofdma_bn_ndpa_stats_elem_t;
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /**
+     * This field is populated with the num of elems in the bn_ndpa[]
+     * variable length array.
+     */
+    A_UINT32 num_elems_bn_ndpa_arr;
+    /**
+     * This field will be filled by target with value of
+     * sizeof(htt_txbf_ofdma_bn_ndpa_stats_elem_t).
+     * This is for allowing host to infer how much data target has provided,
+     * even if it using different version of the struct than what target
+     * had used.
+     */
+    A_UINT32 arr_elem_size_bn_ndpa;
+    HTT_STATS_VAR_LEN_ARRAY1(htt_txbf_ofdma_bn_ndpa_stats_elem_t, bn_ndpa);
+} htt_stats_txbf_ofdma_bn_ndpa_tlv;
+
+typedef struct {
+    /** 11BN UHR OFDMA NDP frame queued to the HW */
+    A_UINT32 bn_ofdma_ndp_queued;
+    /** 11BN UHR OFDMA NDPA frame sent over the air */
+    A_UINT32 bn_ofdma_ndp_tried;
+    /** 11BN UHR OFDMA NDPA frame flushed by HW */
+    A_UINT32 bn_ofdma_ndp_flushed;
+    /** 11BN UHR OFDMA NDPA frame completed with error(s) */
+    A_UINT32 bn_ofdma_ndp_err;
+} htt_txbf_ofdma_bn_ndp_stats_elem_t;
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /**
+     * This field is populated with the num of elems in the bn_ndp[]
+     * variable length array.
+     */
+    A_UINT32 num_elems_bn_ndp_arr;
+    /**
+     * This field will be filled by target with value of
+     * sizeof(htt_txbf_ofdma_bn_ndp_stats_elem_t).
+     * This is for allowing host to infer how much data target has provided,
+     * even if it using different version of the struct than what target
+     * had used.
+     */
+    A_UINT32 arr_elem_size_bn_ndp;
+    HTT_STATS_VAR_LEN_ARRAY1(htt_txbf_ofdma_bn_ndp_stats_elem_t, bn_ndp);
+} htt_stats_txbf_ofdma_bn_ndp_tlv;
+
+typedef struct {
+    /** 11BN UHR OFDMA MU BRPOLL frame queued to the HW */
+    A_UINT32 bn_ofdma_brpoll_queued;
+    /** 11BN UHR OFDMA MU BRPOLL frame sent over the air */
+    A_UINT32 bn_ofdma_brpoll_tried;
+    /** 11BN UHR OFDMA MU BRPOLL frame flushed by HW */
+    A_UINT32 bn_ofdma_brpoll_flushed;
+    /** 11BN UHR OFDMA MU BRPOLL frame completed with error(s) */
+    A_UINT32 bn_ofdma_brp_err;
+    /**
+     * Number of CBF(s) received when 11BN UHR OFDMA MU BRPOLL frame
+     * completed with error(s)
+     */
+    A_UINT32 bn_ofdma_brp_err_num_cbf_rcvd;
+} htt_txbf_ofdma_bn_brp_stats_elem_t;
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /**
+     * This field is populated with the num of elems in the bn_brp[]
+     * variable length array.
+     */
+    A_UINT32 num_elems_bn_brp_arr;
+    /**
+     * This field will be filled by target with value of
+     * sizeof(htt_txbf_ofdma_bn_brp_stats_elem_t).
+     * This is for allowing host to infer how much data target has provided,
+     * even if it using different version of the struct than what target
+     * had used
+     */
+    A_UINT32 arr_elem_size_bn_brp;
+    HTT_STATS_VAR_LEN_ARRAY1(htt_txbf_ofdma_bn_brp_stats_elem_t, bn_brp);
+} htt_stats_txbf_ofdma_bn_brp_tlv;
+
+typedef struct {
+    /**
+     * 11BN UHR OFDMA PPDUs that were sent over the air with steering
+     * (TXBF + OFDMA)
+     */
+    A_UINT32 bn_ofdma_num_ppdu_steer;
+    /** 11BN UHR OFDMA PPDUs that were sent over the air in open loop */
+    A_UINT32 bn_ofdma_num_ppdu_ol;
+    /**
+     * 11BN UHR OFDMA number of users for which CBF prefetch was initiated
+     * to PHY HW during TX
+     */
+    A_UINT32 bn_ofdma_num_usrs_prefetch;
+    /**
+     * 11BN UHR OFDMA number of users for which sounding was initiated
+     * during TX
+     */
+    A_UINT32 bn_ofdma_num_usrs_sound;
+    /**
+     * 11BN UHR OFDMA number of users for which sounding was forced during TX
+     */
+    A_UINT32 bn_ofdma_num_usrs_force_sound;
+} htt_txbf_ofdma_bn_steer_stats_elem_t;
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /**
+     * This field is populated with the num of elems in the bn_steer[]
+     * variable length array.
+     */
+    A_UINT32 num_elems_bn_steer_arr;
+    /**
+     * This field will be filled by target with value of
+     * sizeof(htt_txbf_ofdma_bn_steer_stats_elem_t).
+     * This is for allowing host to infer how much data target has provided,
+     * even if it using different version of the struct than what target
+     * had used.
+     */
+    A_UINT32 arr_elem_size_bn_steer;
+    HTT_STATS_VAR_LEN_ARRAY1(htt_txbf_ofdma_bn_steer_stats_elem_t, bn_steer);
+} htt_stats_txbf_ofdma_bn_steer_tlv;
+
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /* 11BN UHR OFDMA MPDUs tried in rbo steering */
+    A_UINT32 bn_ofdma_rbo_steer_mpdus_tried;
+    /* 11BN UHR OFDMA MPDUs failed in rbo steering */
+    A_UINT32 bn_ofdma_rbo_steer_mpdus_failed;
+    /* 11BN UHR OFDMA MPDUs tried in sifs steering */
+    A_UINT32 bn_ofdma_sifs_steer_mpdus_tried;
+    /* 11BN UHR OFDMA MPDUs failed in sifs steering */
+    A_UINT32 bn_ofdma_sifs_steer_mpdus_failed;
+} htt_stats_txbf_ofdma_bn_steer_mpdu_tlv;
+
+/* HTT_STATS_TXBF_OFDMA_BN_PARBW_TAG stats TLV:
+ * Sent by target in response to HTT_DBG_EXT_STATS_TXBF_OFDMA stats ID request.
+ */
+typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    /* Num of UHR TxBF Partial Bandwidth soundings */
+    A_UINT32 bn_ofdma_parbw_user_snd;
+    /* Num of UHR Partial Bandwidth Sounded CVs received */
+    A_UINT32 bn_ofdma_parbw_cv;
+    /* Num of 11BN EHT Total CVs received */
+    A_UINT32 bn_ofdma_total_cv;
+} htt_stats_txbf_ofdma_bn_parbw_tlv;
+
 /* STATS_TYPE : HTT_DBG_EXT_STATS_TXBF_OFDMA
  * TLV_TAGS:
  *      - HTT_STATS_TXBF_OFDMA_NDPA_STATS_TAG
@@ -3966,6 +4385,11 @@ typedef struct {
  *      - HTT_STATS_TXBF_OFDMA_BE_BRP_STATS_TAG
  *      - HTT_STATS_TXBF_OFDMA_BE_STEER_STATS_TAG
  *      - HTT_STATS_TXBF_OFDMA_BE_STEER_MPDU_STATS_TAG
+ *      - HTT_STATS_TXBF_OFDMA_BN_NDPA_TAG
+ *      - HTT_STATS_TXBF_OFDMA_BN_NDP_TAG
+ *      - HTT_STATS_TXBF_OFDMA_BN_BRP_TAG
+ *      - HTT_STATS_TXBF_OFDMA_BN_STEER_TAG
+ *      - HTT_STATS_TXBF_OFDMA_BN_STEER_MPDU_TAG
  */
 
 typedef struct {
@@ -5095,6 +5519,15 @@ typedef struct {
     A_UINT32 tqm_enqueue_msdu_count;
     A_UINT32 tqm_dropped_msdu_count;
     A_UINT32 tqm_dequeue_msdu_count;
+
+    A_UINT32 tqm_enqueue_msdu_count_ac[HTT_NUM_AC_WMM];
+    A_UINT32 tqm_dropped_msdu_count_ac[HTT_NUM_AC_WMM];
+    A_UINT32 tqm_dequeue_msdu_count_ac[HTT_NUM_AC_WMM];
+    A_UINT32 remove_msdu_ac[HTT_NUM_AC_WMM];
+    A_UINT32 remove_mpdu_ac[HTT_NUM_AC_WMM];
+    A_UINT32 remove_msdu_ttl_ac[HTT_NUM_AC_WMM];
+    A_UINT32 remove_mpdu_ttl_ac[HTT_NUM_AC_WMM];
+    A_UINT32 remove_mpdu_retries_ac[HTT_NUM_AC_WMM];
 } htt_stats_tx_tqm_pdev_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_tx_tqm_pdev_tlv htt_tx_tqm_pdev_stats_tlv_v;
@@ -6177,7 +6610,9 @@ typedef struct {
 
 #define HTT_TX_PDEV_STATS_NUM_MCS_COUNTERS 12 /* 0-11 */
 #define HTT_TX_PDEV_STATS_NUM_EXTRA_MCS_COUNTERS 2 /* 12, 13 */
+#define HTT_TX_PDEV_STATS_NUM_MCS_COUNTERS_EXT 14 /* 0-13 */
 #define HTT_TX_PDEV_STATS_NUM_EXTRA2_MCS_COUNTERS 2 /* 14, 15 */
+#define HTT_TX_PDEV_STATS_NUM_EXTRA3_MCS_COUNTERS 4 /* 1.1, 3.1, 4.1, 7.1 */
 #define HTT_TX_PDEV_STATS_NUM_GI_COUNTERS 4
 #define HTT_TX_PDEV_STATS_NUM_DCM_COUNTERS 5
 #define HTT_TX_PDEV_STATS_NUM_BW_COUNTERS 4
@@ -6188,6 +6623,7 @@ typedef struct {
 #define HTT_TX_PDEV_STATS_NUM_LTF 4
 #define HTT_TX_PDEV_STATS_NUM_11AX_TRIGGER_TYPES 6
 #define HTT_TX_PDEV_STATS_NUM_11BE_TRIGGER_TYPES 6
+#define HTT_TX_PDEV_STATS_NUM_11BN_TRIGGER_TYPES 6
 #define HTT_TX_VDEV_STATS_NUM_SPATIAL_STREAMS 4
 #define HTT_TX_NUM_OF_SOUNDING_STATS_WORDS \
     (HTT_TX_PDEV_STATS_NUM_BW_COUNTERS * \
@@ -6438,7 +6874,7 @@ typedef struct {
     A_UINT32 ax_su_embedded_trigger_data_ppdu;
     /** 11AX HE SU data + embedded trigger PPDU failure stats (stats for HETP ack failure PPDU cnt) */
     A_UINT32 ax_su_embedded_trigger_data_ppdu_err;
-    /** sta side trigger stats */
+    /** STA side trigger stats */
     A_UINT32 trigger_type_11be[HTT_TX_PDEV_STATS_NUM_11BE_TRIGGER_TYPES];
     /** Stats for Extra EHT LTF */
     A_UINT32 extra_eht_ltf;
@@ -6449,6 +6885,39 @@ typedef struct {
     /** Number of tx 2xldpc packets */
     A_UINT32 tx_2xldpc;
     A_UINT32 rc_state_probe_mismatched;
+    /* npca_tx_bw: NPCA bw info
+     * element 0:  20 MHz
+     * element 1:  40 MHz
+     * element 2:  80 MHz
+     * element 3: 160 MHz
+     * element 4: 320 MHz
+     */
+    A_UINT32 npca_tx_bw[HTT_TX_PDEV_STATS_NUM_BN_BW_COUNTERS];
+    /* npca_tx_su_punctured_mode: NPCA punctured mode info
+     * element 0:      no puncture
+     * element 1:  20 MHz punctured
+     * element 2:  40 MHz punctured
+     * element 3:  80 MHz punctured
+     * element 4: 120 MHz punctured
+     */
+    A_UINT32 npca_tx_su_punctured_mode[HTT_TX_PDEV_STATS_NUM_PUNCTURED_MODE_COUNTERS];
+    /* STA side trigger stats */
+    A_UINT32 trigger_type_11bn[HTT_TX_PDEV_STATS_NUM_11BN_TRIGGER_TYPES];
+#if 0
+    /* NOTE:
+     * The tx_mcs_ext_3 field is being reverted at least temporarily,
+     * to work around message size limits in certain targets.
+     * If/when this revert becomes permanent, this "#if 0" block will
+     * be removed altogether.
+     */
+    /* Stats for iMCS 1.1, 3.1, 4.1, 7.1 */
+    A_UINT32 tx_mcs_ext_3[HTT_TX_PDEV_STATS_NUM_EXTRA3_MCS_COUNTERS];
+#endif
+
+/*
+ * NOTE: THIS STRUCT HAS ONLY 20 BYTES OF SPACE LEFT
+ * WITHIN THE TARGET'S HTT_STATS_TLV_MAX_LEN SIZE LIMIT.
+ */
 } htt_stats_tx_pdev_rate_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_tx_pdev_rate_stats_tlv htt_tx_pdev_rate_stats_tlv;
@@ -6638,6 +7107,7 @@ typedef struct {
 #define HTT_RX_PDEV_STATS_NUM_MCS_COUNTERS 12 /* 0-11 */
 #define HTT_RX_PDEV_STATS_NUM_EXTRA_MCS_COUNTERS 2 /* 12, 13 */
 #define HTT_RX_PDEV_STATS_NUM_EXTRA2_MCS_COUNTERS 2 /* 14, 15 */
+#define HTT_RX_PDEV_STATS_NUM_EXTRA3_MCS_COUNTERS 4 /* 1.1, 3.1, 4.1, 7.1 */
 #define HTT_RX_PDEV_STATS_NUM_MCS_COUNTERS_EXT 14 /* 0-13 */
 #define HTT_RX_PDEV_STATS_NUM_GI_COUNTERS 4
 #define HTT_RX_PDEV_STATS_NUM_DCM_COUNTERS 5
@@ -6995,6 +7465,10 @@ typedef struct {
     };
     /** Number of rx 2xldpc packets */
     A_UINT32 rx_2xldpc;
+    A_UINT32 npca_rx_bw_ext[HTT_RX_PDEV_STATS_NUM_BN_BW_COUNTERS];
+    A_UINT32 npca_rx_su_punctured_mode[HTT_RX_PDEV_STATS_NUM_PUNCTURED_MODE_COUNTERS];
+    /* Stats for iMCS 1.1, 3.1, 4.1, 7.1 */
+    A_UINT32 rx_mcs_ext_3[HTT_RX_PDEV_STATS_NUM_EXTRA3_MCS_COUNTERS];
 } htt_stats_rx_pdev_rate_ext_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_rx_pdev_rate_ext_stats_tlv htt_rx_pdev_rate_ext_stats_tlv;
@@ -7775,6 +8249,7 @@ typedef struct {
         /* upper 32 bits of the rx_bytes value */
         A_UINT32 high_32;
     } bytes_received;
+    A_UINT32  rx_msdu_cnt_ac[HTT_NUM_AC_WMM];
 } htt_stats_rx_pdev_fw_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_rx_pdev_fw_stats_tlv htt_rx_pdev_fw_stats_tlv;
@@ -8949,6 +9424,19 @@ typedef enum {
     HTT_TX_PER_RATE_STATS_NUM_MLO_RA_DD_MCS_DROP_COUNTERS = 2
 } HTT_TX_PER_RATE_STATS_NUM_MLO_RA_DD_MCS_DROP_TYPE;
 
+#define HTT_PER_RATE_STATS_WIFI_VERSION_M 0x0000000f
+#define HTT_PER_RATE_STATS_WIFI_VERSION_S 0
+
+#define HTT_PER_RATE_STATS_WIFI_VERSION_GET(_var) \
+    (((_var) & HTT_PER_RATE_STATS_WIFI_VERSION_M) >> \
+     HTT_PER_RATE_STATS_WIFI_VERSION_S)
+
+#define HTT_PER_RATE_STATS_WIFI_VERSION_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_PER_RATE_STATS_WIFI_VERSION, _val); \
+        ((_var) |= ((_val) << HTT_PER_RATE_STATS_WIFI_VERSION_S)); \
+    } while (0)
+
 typedef struct {
     htt_tlv_hdr_t tlv_hdr;
 
@@ -8989,6 +9477,31 @@ typedef struct {
      *     mlo_rate_drop_down[1]: MCS drop counter
      */
     A_UINT32 mlo_rate_drop_down[HTT_TX_PER_RATE_STATS_NUM_MLO_RA_DD_MCS_DROP_COUNTERS];
+
+    /**
+     * BIT [ 3 :  0]   :- wifi_version
+     * BIT [31 :  4]   :- reserved
+     */
+    union {
+        struct {
+            A_UINT32
+                /* wifi_version:
+                 * Holds a HTT_RX_TX_PDEV_STATS_WIFI_VERSION value.
+                 * Refer to HTT_PER_RATE_STATS_WIFI_VERSION_GET
+                 * / _SET macros for accessing this bitfield.
+                 */
+                wifi_version:  4,
+                reserved:     28;
+        };
+        A_UINT32 wifi_version__word;
+    };
+
+    htt_tx_rate_stats_t npca_per_bw[HTT_TX_PDEV_STATS_NUM_BN_BW_COUNTERS];
+
+    htt_tx_rate_stats_t npca_per_tx_su_punctured_mode[HTT_TX_PDEV_STATS_NUM_PUNCTURED_MODE_COUNTERS];
+
+    /* PER stats for iMCS 1.1, 3.1, 4.1, 7.1 */
+    htt_tx_rate_stats_t per_mcs_ext_3[HTT_TX_PDEV_STATS_NUM_EXTRA3_MCS_COUNTERS];
 } htt_stats_per_rate_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */
 typedef htt_stats_per_rate_stats_tlv htt_tx_rate_stats_per_tlv;
@@ -11459,6 +11972,84 @@ typedef struct {
 
 
 typedef struct {
+    htt_tlv_hdr_t tlv_hdr;
+    union {
+        A_UINT32 flags;
+        struct {
+             /*
+              * bit 0: Dynamic ED CCA status flag
+              * bit 1: LPI status flag
+              * bit 2: Green Tx status flag
+              * bit 3: ANI status flag
+              * bit 4: Static ANI status flag
+              * bit 5: ANN Powerboost status flag
+              * bit 6: EANI status flag
+              * bit 7: Spur Mitigation status flag
+              * bit 8: Multigain RSSI status flag
+              */
+             A_UINT32
+                 is_dyn_cca_enabled:        1, /* bit 0 */
+                 is_lpi_enabled:            1, /* bit 1 */
+                 is_gtx_enabled:            1, /* bit 2 */
+                 is_ani_enabled:            1, /* bit 3 */
+                 is_static_ani_enabled:     1, /* bit 4 */
+                 is_ann_pbt_enabled:        1, /* bit 5 */
+                 is_e_ani_enabled:          1, /* bit 6 */
+                 is_spur_mit_enabled:       1, /* bit 7 */
+                 is_multigain_rssi_enabled: 1, /* bit 8 */
+
+                 reserved: 23; /* bits 31:9 */
+        };
+    };
+} htt_stats_optional_configs_tlv;
+
+#define HTT_STATS_OPT_CONF_GET_DYN_CCA(word) \
+    (((word) & 0x1) >> 0)
+#define HTT_STATS_OPT_CONF_SET_DYN_CCA(word, value) \
+    ((word) = ((word) & ~0x1) | (((value) & 0x1) << 0))
+
+#define HTT_STATS_OPT_CONF_GET_LPI(word) \
+    (((word) & 0x2) >> 1)
+#define HTT_STATS_OPT_CONF_SET_LPI(word, value) \
+    ((word) = ((word) & ~0x2) | (((value) & 0x1) << 1))
+
+#define HTT_STATS_OPT_CONF_GET_GTX(word) \
+    (((word) & 0x4) >> 2)
+#define HTT_STATS_OPT_CONF_SET_GTX(word, value) \
+    ((word) = ((word) & ~0x4) | (((value) & 0x1) << 2))
+
+#define HTT_STATS_OPT_CONF_GET_ANI(word) \
+    (((word) & 0x8) >> 3)
+#define HTT_STATS_OPT_CONF_SET_ANI(word, value) \
+    ((word) = ((word) & ~0x8) | (((value) & 0x1) << 3))
+
+#define HTT_STATS_OPT_CONF_GET_STATIC_ANI(word) \
+    (((word) & 0x10) >> 4)
+#define HTT_STATS_OPT_CONF_SET_STATIC_ANI(word, value) \
+    ((word) = ((word) & ~0x10) | (((value) & 0x1) << 4))
+
+#define HTT_STATS_OPT_CONF_GET_ANN_PBT(word) \
+    (((word) & 0x20) >> 5)
+#define HTT_STATS_OPT_CONF_SET_ANN_PBT(word, value) \
+    ((word) = ((word) & ~0x20) | (((value) & 0x1) << 5))
+
+#define HTT_STATS_OPT_CONF_GET_EANI(word) \
+    (((word) & 0x40) >> 6)
+#define HTT_STATS_OPT_CONF_SET_EANI(word, value) \
+    ((word) = ((word) & ~0x40) | (((value) & 0x1) << 6))
+
+#define HTT_STATS_OPT_CONF_GET_SPUR_MIT(word) \
+    (((word) & 0x80) >> 7)
+#define HTT_STATS_OPT_CONF_SET_SPUR_MIT(word, value) \
+    ((word) = ((word) & ~0x80) | (((value) & 0x1) << 7))
+
+#define HTT_STATS_OPT_CONF_GET_MULTIGAIN_RSSI(word) \
+    (((word) & 0x100) >> 8)
+#define HTT_STATS_OPT_CONF_SET_MULTIGAIN_RSSI(word, value) \
+    ((word) = ((word) & ~0x100) | (((value) & 0x1) << 8))
+
+
+typedef struct {
     union {
         A_UINT32 word32;
         struct {
@@ -13020,6 +13611,9 @@ typedef htt_stats_pdev_tdma_tlv htt_pdev_tdma_stats_tlv;
 #define HTT_BW_MGR_STATS_STATIC_PATTERN_M       0x00ffff00
 #define HTT_BW_MGR_STATS_STATIC_PATTERN_S       8
 
+#define HTT_BW_MGR_STATS_WIFI_VERSION_M         0x0000000f
+#define HTT_BW_MGR_STATS_WIFI_VERSION_S         0
+
 #define HTT_BW_MGR_STATS_MAC_ID_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_MAC_ID_M) >> \
      HTT_BW_MGR_STATS_MAC_ID_S)
@@ -13034,68 +13628,102 @@ typedef htt_stats_pdev_tdma_tlv htt_pdev_tdma_stats_tlv;
 #define HTT_BW_MGR_STATS_PRI20_IDX_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_PRI20_IDX_M) >> \
      HTT_BW_MGR_STATS_PRI20_IDX_S)
+#define HTT_BW_MGR_STATS_NPCA_PRI20_IDX_GET(_var) \
+     HTT_BW_MGR_STATS_PRI20_IDX_GET(_var)
 
 #define HTT_BW_MGR_STATS_PRI20_IDX_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_PRI20_IDX, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_PRI20_IDX_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_NPCA_PRI20_IDX_SET(_var, _val) \
+    HTT_BW_MGR_STATS_PRI20_IDX_SET(_var, _val)
 
 
 #define HTT_BW_MGR_STATS_PRI20_FREQ_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_PRI20_FREQ_M) >> \
      HTT_BW_MGR_STATS_PRI20_FREQ_S)
+#define HTT_BW_MGR_STATS_NPCA_PRI20_FREQ_GET(_var) \
+    HTT_BW_MGR_STATS_PRI20_FREQ_GET(_var)
 
 #define HTT_BW_MGR_STATS_PRI20_FREQ_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_PRI20_FREQ, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_PRI20_FREQ_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_NPCA_PRI20_FREQ_SET(_var, _val) \
+    HTT_BW_MGR_STATS_PRI20_FREQ_SET(_var, _val)
 
 
 #define HTT_BW_MGR_STATS_CENTER_FREQ1_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_CENTER_FREQ1_M) >> \
      HTT_BW_MGR_STATS_CENTER_FREQ1_S)
+#define HTT_BW_MGR_STATS_NPCA_CENTER_FREQ1_GET(_var) \
+    HTT_BW_MGR_STATS_CENTER_FREQ1_GET(_var)
 
 #define HTT_BW_MGR_STATS_CENTER_FREQ1_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_CENTER_FREQ1, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_CENTER_FREQ1_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_NPCA_CENTER_FREQ1_SET(_var, _val) \
+    HTT_BW_MGR_STATS_CENTER_FREQ1_SET(_var, _val)
 
 
 #define HTT_BW_MGR_STATS_CENTER_FREQ2_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_CENTER_FREQ2_M) >> \
      HTT_BW_MGR_STATS_CENTER_FREQ2_S)
+#define HTT_BW_MGR_STATS_NPCA_CENTER_FREQ2_GET(_var) \
+    HTT_BW_MGR_STATS_CENTER_FREQ2_GET(_var)
 
 #define HTT_BW_MGR_STATS_CENTER_FREQ2_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_CENTER_FREQ2, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_CENTER_FREQ2_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_NPCA_CENTER_FREQ2_SET(_var, _val) \
+    HTT_BW_MGR_STATS_CENTER_FREQ2_SET(_var, _val)
 
 
 #define HTT_BW_MGR_STATS_CHAN_PHY_MODE_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_CHAN_PHY_MODE_M) >> \
      HTT_BW_MGR_STATS_CHAN_PHY_MODE_S)
+#define HTT_BW_MGR_STATS_CHAN_NPCA_PHY_MODE_GET(_var) \
+    HTT_BW_MGR_STATS_CHAN_PHY_MODE_GET(_var)
 
 #define HTT_BW_MGR_STATS_CHAN_PHY_MODE_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_CHAN_PHY_MODE, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_CHAN_PHY_MODE_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_CHAN_NPCA_PHY_MODE_SET(_var, _val) \
+    HTT_BW_MGR_STATS_CHAN_PHY_MODE_SET(_var, _val)
 
 
 #define HTT_BW_MGR_STATS_STATIC_PATTERN_GET(_var) \
     (((_var) & HTT_BW_MGR_STATS_STATIC_PATTERN_M) >> \
      HTT_BW_MGR_STATS_STATIC_PATTERN_S)
+#define HTT_BW_MGR_STATS_NPCA_STATIC_PATTERN_GET(_var) \
+     HTT_BW_MGR_STATS_STATIC_PATTERN_GET(_var)
 
 #define HTT_BW_MGR_STATS_STATIC_PATTERN_SET(_var, _val) \
     do { \
         HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_STATIC_PATTERN, _val); \
         ((_var) |= ((_val) << HTT_BW_MGR_STATS_STATIC_PATTERN_S)); \
     } while (0)
+#define HTT_BW_MGR_STATS_NPCA_STATIC_PATTERN_SET(_var, _val) \
+     HTT_BW_MGR_STATS_STATIC_PATTERN_SET(_var, _val)
 
+
+#define HTT_BW_MGR_STATS_WIFI_VERSION_GET(_var) \
+    (((_var) & HTT_BW_MGR_STATS_WIFI_VERSION_M) >> \
+     HTT_BW_MGR_STATS_WIFI_VERSION_S)
+
+#define HTT_BW_MGR_STATS_WIFI_VERSION_SET(_var, _val) \
+    do { \
+        HTT_CHECK_SET_VAL(HTT_BW_MGR_STATS_WIFI_VERSION, _val); \
+        ((_var) |= ((_val) << HTT_BW_MGR_STATS_WIFI_VERSION_S)); \
+    } while (0)
 
 typedef struct {
     htt_tlv_hdr_t tlv_hdr;
@@ -13134,6 +13762,45 @@ typedef struct {
             A_UINT32 reserved : 8;
         };
         A_UINT32 phy_mode__static_pattern;
+    };
+
+    /*
+     * BIT [ 3 :  0]   :- wifi_version
+     * BIT [ 7  :  4]  :- Reserved
+     * BIT [ 15 :  8]  :- NPCA_pri20_index
+     * BIT [ 31 : 16]  :- NPCA_pri20_freq in Mhz
+     */
+    union {
+        struct {
+            A_UINT32 wifi_version        :  4;
+            A_UINT32 reserved2           :  4;
+            A_UINT32 npca_pri20_idx      :  8;
+            A_UINT32 npca_pri20_freq_mhz : 16;
+        };
+        A_UINT32 npca__wifi_version__pri20_idx__freq;
+    };
+
+    /* BIT [ 15 :  0]  :- NPCA_centre_freq1
+     * BIT [ 31 : 16]  :- NPCA_centre_freq2
+     */
+    union {
+        struct {
+            A_UINT32 npca_centre_freq1 : 16;
+            A_UINT32 npca_centre_freq2 : 16;
+        };
+        A_UINT32 npca__centre_freq1__freq2;
+    };
+
+    /* BIT [ 7 :  0]  :- NPCA_channel_phy_mode
+     * BIT [ 23 : 8]  :- NPCA_pattern
+     */
+    union {
+        struct {
+            A_UINT32 npca_phy_mode       :  8;
+            A_UINT32 npca_static_pattern : 16;
+            A_UINT32 reserved3           :  8;
+        };
+        A_UINT32 npca__phy_mode__static_pattern;
     };
 } htt_stats_pdev_bw_mgr_stats_tlv;
 /* preserve old name alias for new name consistent with the tag name */

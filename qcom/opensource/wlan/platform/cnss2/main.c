@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/delay.h>
@@ -25,6 +25,8 @@
 #if IS_ENABLED(CONFIG_QCOM_MINIDUMP)
 #include <soc/qcom/minidump.h>
 #endif
+#include <linux/regulator/consumer.h>
+#include <linux/nvmem-consumer.h>
 
 #include "cnss_plat_ipc_qmi.h"
 #include "cnss_utils.h"
@@ -1393,6 +1395,10 @@ static char *cnss_driver_event_to_str(enum cnss_driver_event_type type)
 		return "QDSS_TRACE_FREE";
 	case CNSS_DRIVER_EVENT_QDSS_TRACE_REQ_DATA:
 		return "QDSS_TRACE_REQ_DATA";
+	case CNSS_DRIVER_EVENT_RESUME_POST_SOL:
+		return "RESUME_POST_SOL";
+	case CNSS_DRIVER_EVENT_XO_TRIM_IND:
+		return "XO_TRIM_IND";
 	case CNSS_DRIVER_EVENT_MAX:
 		return "EVENT_MAX";
 	}
@@ -1702,6 +1708,100 @@ int cnss_idle_shutdown(struct device *dev)
 }
 EXPORT_SYMBOL(cnss_idle_shutdown);
 
+/**
+ * cnss_xo_trim_init - Initialize configurations for XO trim
+ * @plat_priv: Pointer to cnss platform data
+ *
+ * This function attempts to retrieve the register for inputting XO calibration
+ * data and the regulator to trigger the PBS from DTS.
+ *
+ * Return: None
+ */
+static void cnss_xo_trim_init(struct cnss_plat_data *plat_priv)
+{
+	struct device *dev;
+	struct cnss_xo_trim_config *xo_trim_conf;
+
+	dev = &plat_priv->plat_dev->dev;
+	xo_trim_conf = &plat_priv->xo_trim_conf;
+
+	xo_trim_conf->xo_calib_reg = devm_nvmem_cell_get(dev, "xo_calib_reg");
+	if (IS_ERR(xo_trim_conf->xo_calib_reg)) {
+		cnss_pr_dbg("Invalid xo_calib_reg: %ld\n",
+			    PTR_ERR(xo_trim_conf->xo_calib_reg));
+		return;
+	}
+
+	xo_trim_conf->wcal_pbs = devm_regulator_get_optional(dev, "wcal-pbs");
+	if (IS_ERR(xo_trim_conf->wcal_pbs)) {
+		cnss_pr_dbg("Invalid wcal_pbs: %ld\n",
+			    PTR_ERR(xo_trim_conf->wcal_pbs));
+		return;
+	}
+
+	cnss_pr_dbg("XO trim initialized\n");
+}
+
+/**
+ * cnss_xo_trim_deinit - Deinitialize configurations for XO trim
+ * @plat_priv: Pointer to cnss platform data
+ *
+ * Return: None
+ */
+static void cnss_xo_trim_deinit(struct cnss_plat_data *plat_priv)
+{
+	/* The resources allocated by devm_* functions will be automatically
+	 * freed by the resource manager when the device is released.
+	 */
+	cnss_pr_dbg("XO trim de-initialized\n");
+}
+
+/**
+ * cnss_xo_trim_perform - Perform the XO trim
+ * @xo_trim_conf: pointer to config for XO trim
+ *
+ * This function writes the new XO trim value to the NVMEM location exposed by
+ * PMIC. It then triggers PBS sequence using the WLAN_CAL regulator resource by
+ * calling regulator_enable(), followed by regulator_disable().
+ * This sequence causes PMIC PBS to apply the new trim value to PMIC XO trim
+ * settings, leading to an adjustment in the crystal oscillator frequency.
+ *
+ * Return: 0 on success, errno otherwise
+ */
+static int cnss_xo_trim_perform(struct cnss_xo_trim_config *xo_trim_conf)
+{
+	int ret;
+
+	if (IS_ERR_OR_NULL(xo_trim_conf->xo_calib_reg) ||
+	    IS_ERR_OR_NULL(xo_trim_conf->wcal_pbs)) {
+		cnss_pr_err("Invalid xo trim config\n");
+		return -EINVAL;
+	}
+
+	ret = nvmem_cell_write(xo_trim_conf->xo_calib_reg,
+			       &xo_trim_conf->trim_val,
+			       sizeof(xo_trim_conf->trim_val));
+	if (ret < 0) {
+		cnss_pr_err("Fail to write xo_calib_reg, ret = %d\n", ret);
+		return ret;
+	}
+
+	/* Enable/disable regulator to trigger PBS sequence */
+	ret = regulator_enable(xo_trim_conf->wcal_pbs);
+	if (ret) {
+		cnss_pr_err("Fail to enable wcal_pbs: %d\n", ret);
+		return ret;
+	}
+
+	ret = regulator_disable(xo_trim_conf->wcal_pbs);
+	if (ret) {
+		cnss_pr_err("Fail to disable wcal_pbs: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int cnss_get_resources(struct cnss_plat_data *plat_priv)
 {
 	int ret = 0;
@@ -1729,6 +1829,8 @@ static int cnss_get_resources(struct cnss_plat_data *plat_priv)
 		goto put_clk;
 	}
 
+	/* Non-fatal and continue if configuration is unavailable */
+	cnss_xo_trim_init(plat_priv);
 	return 0;
 
 put_clk:
@@ -1741,6 +1843,8 @@ out:
 
 static void cnss_put_resources(struct cnss_plat_data *plat_priv)
 {
+	cnss_xo_trim_deinit(plat_priv);
+
 	if (plat_priv->is_fw_managed_pwr) {
 		if (plat_priv->powered_on) {
 			cnss_fw_managed_power_gpio(plat_priv,
@@ -2885,6 +2989,82 @@ static int cnss_qdss_trace_req_data_hdlr(struct cnss_plat_data *plat_priv,
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_MEM_ALLOC_FALLBACK)
+static bool
+cnss_req_mem_results_handle(struct cnss_plat_data *plat_priv,
+			    int ret)
+{
+	cnss_pr_dbg("process results %d", ret);
+
+	/*
+	 * Only HSP to be veriefd support retry,
+	 * so consider HSP firstly.
+	 * Other chips keep the same logic as before
+	 */
+	if (plat_priv->device_id != QCA6490_DEVICE_ID)
+		return !!ret;
+
+	if (ret == -ENOMEM) { /* continue send qmi resonse to ask for retry */
+		cnss_pr_dbg("clear mem seg len\n");
+		cnss_bus_free_fw_mem(plat_priv, QMI_WLFW_MAX_NUM_MEM_SEG_V01);
+		plat_priv->smaller_size_mem_req = true;
+		return false;
+	} else if (ret == 0) { /* continue send qmi response */
+		plat_priv->smaller_size_mem_req = false;
+		return false;
+	} else { /* break */
+		return true;
+	}
+}
+#else
+static bool
+cnss_req_mem_results_handle(struct cnss_plat_data *plat_priv,
+			    int ret)
+{
+	return !!ret;
+}
+#endif
+static int cnss_resume_post_sol_hdlr(struct cnss_plat_data *plat_priv,
+					  void *data)
+{
+	int ret = 0;
+
+	if (!plat_priv)
+		return -ENODEV;
+
+	cnss_bus_recover_link_post_sol(plat_priv);
+
+	kfree(data);
+	return ret;
+}
+
+/**
+ * cnss_xo_trim_ind_hdlr - Handler for XO trim indication.
+ * @plat_priv: Pointer to platform driver context.
+ * @data: Pointer to event data that holds the trim value.
+ *
+ * This function performs XO trim and notifies target of the result.
+ *
+ * Return: 0 on success, errno othrewise
+ */
+static int cnss_xo_trim_ind_hdlr(struct cnss_plat_data *plat_priv, void *data)
+{
+	int ret = -EINVAL;
+
+	if (!data)
+		goto out;
+
+	plat_priv->xo_trim_conf.trim_val = *((u8 *)data);
+	kfree(data);
+
+	ret = cnss_xo_trim_perform(&plat_priv->xo_trim_conf);
+	cnss_pr_dbg("XO trim result with value(%u): %d\n",
+		    plat_priv->xo_trim_conf.trim_val, ret);
+
+out:
+	return cnss_wlfw_xo_trim_result_send_sync(plat_priv, ret);
+}
+
 static void cnss_driver_event_work(struct work_struct *work)
 {
 	struct cnss_plat_data *plat_priv =
@@ -2892,6 +3072,7 @@ static void cnss_driver_event_work(struct work_struct *work)
 	struct cnss_driver_event *event;
 	unsigned long flags;
 	int ret = 0;
+	bool is_break = false;
 
 	if (!plat_priv) {
 		cnss_pr_err("plat_priv is NULL!\n");
@@ -2922,7 +3103,8 @@ static void cnss_driver_event_work(struct work_struct *work)
 			break;
 		case CNSS_DRIVER_EVENT_REQUEST_MEM:
 			ret = cnss_bus_alloc_fw_mem(plat_priv);
-			if (ret)
+			is_break = cnss_req_mem_results_handle(plat_priv, ret);
+			if (is_break)
 				break;
 			ret = cnss_wlfw_respond_mem_send_sync(plat_priv);
 			break;
@@ -2988,6 +3170,13 @@ static void cnss_driver_event_work(struct work_struct *work)
 		case CNSS_DRIVER_EVENT_QDSS_TRACE_REQ_DATA:
 			ret = cnss_qdss_trace_req_data_hdlr(plat_priv,
 							    event->data);
+			break;
+		case CNSS_DRIVER_EVENT_RESUME_POST_SOL:
+			ret = cnss_resume_post_sol_hdlr(plat_priv,
+							     event->data);
+			break;
+		case CNSS_DRIVER_EVENT_XO_TRIM_IND:
+			ret = cnss_xo_trim_ind_hdlr(plat_priv, event->data);
 			break;
 		default:
 			cnss_pr_err("Invalid driver event type: %d",
